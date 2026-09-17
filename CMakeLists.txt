@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(qifviewer VERSION 0.5.0 LANGUAGES C CXX)
+project(qifviewer VERSION 0.5.2 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -168,6 +168,26 @@ if(BUILD_TESTING AND IS_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/tests")
         add_executable(qif_camera_math_test tests/camera_math_test.cpp)
         target_include_directories(qif_camera_math_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
         add_test(NAME qif_camera_math COMMAND qif_camera_math_test)
+    endif()
+
+    if(TARGET qifcore AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/edge_only_load_test.cpp" AND
+       EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/conformance/edge-only.qif")
+        add_executable(qif_edge_only_load_test tests/edge_only_load_test.cpp)
+        target_link_libraries(qif_edge_only_load_test PRIVATE qifcore)
+        add_test(NAME qif_orphan_edge_geometry
+                 COMMAND qif_edge_only_load_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/conformance/edge-only.qif)
+        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/conformance/wire-body.qif")
+            add_test(NAME qif_wire_body_geometry
+                     COMMAND qif_edge_only_load_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/conformance/wire-body.qif)
+        endif()
+    endif()
+
+    if(TARGET qifcore AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/sheet_surface_load_test.cpp" AND
+       EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/conformance/sheet-circle-no-pcurve.qif")
+        add_executable(qif_sheet_surface_load_test tests/sheet_surface_load_test.cpp)
+        target_link_libraries(qif_sheet_surface_load_test PRIVATE qifcore)
+        add_test(NAME qif_sheet_circle_without_pcurve
+                 COMMAND qif_sheet_surface_load_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/conformance/sheet-circle-no-pcurve.qif)
     endif()
 
     find_package(Python3 COMPONENTS Interpreter QUIET)

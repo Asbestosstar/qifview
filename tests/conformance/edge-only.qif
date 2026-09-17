@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<QIFDocument xmlns="http://qifstandards.org/xsd/qif3" versionQIF="3.0.0" idMax="6">
+  <QPId>00000000-0000-4000-8000-000000000010</QPId>
+  <Product>
+    <GeometrySet>
+      <PointSet n="2">
+        <Point id="1"><XYZ>0 0 0</XYZ></Point>
+        <Point id="2"><XYZ>25 0 0</XYZ></Point>
+      </PointSet>
+      <Curve13Set n="1">
+        <Segment13 id="3">
+          <Attributes n="1"><AttributeStr name="source" value="STEP edge"/></Attributes>
+          <Segment13Core domain="0 1">
+            <StartPoint>0 0 0</StartPoint>
+            <EndPoint>25 0 0</EndPoint>
+          </Segment13Core>
+        </Segment13>
+      </Curve13Set>
+    </GeometrySet>
+    <TopologySet>
+      <VertexSet n="2">
+        <Vertex id="4"><Point><Id>1</Id></Point></Vertex>
+        <Vertex id="5"><Point><Id>2</Id></Point></Vertex>
+      </VertexSet>
+      <EdgeSet n="1">
+        <Edge id="6">
+          <Curve><Id>3</Id></Curve>
+          <VertexBeg><Id>4</Id></VertexBeg>
+          <VertexEnd><Id>5</Id></VertexEnd>
+        </Edge>
+      </EdgeSet>
+    </TopologySet>
+  </Product>
+</QIFDocument>

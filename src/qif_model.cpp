@@ -47,6 +47,18 @@ pugi::xml_node firstElementChild(pugi::xml_node n) {
     return {};
 }
 
+pugi::xml_node firstCoreChild(pugi::xml_node n) {
+    // QIF geometry wrappers inherit NodeWithIdBaseType, so an optional
+    // <Attributes> element can legally appear before the geometry core.
+    // Never assume the first element child is the Core.
+    for (auto c : n.children()) {
+        if (c.type() != pugi::node_element) continue;
+        const std::string name = localName(c.name());
+        if (name.size() >= 4 && name.compare(name.size() - 4, 4, "Core") == 0) return c;
+    }
+    return {};
+}
+
 pugi::xml_node findFirstLocal(pugi::xml_node n, const char* name) {
     if (n && localName(n.name()) == name) return n;
     for (auto c : n.children()) {
@@ -941,13 +953,13 @@ Curve3 parseCurve3Core(pugi::xml_node core, Context& ctx) {
 }
 
 Curve2 parseCurve2Node(pugi::xml_node n, Context& ctx) {
-    auto core = localName(n.name()).find("Core") != std::string::npos ? n : firstElementChild(n);
+    auto core = localName(n.name()).find("Core") != std::string::npos ? n : firstCoreChild(n);
     return core ? parseCurve2Core(core,ctx) : Curve2{};
 }
 
 Curve3 parseCurve3Node(pugi::xml_node n, Context& ctx) {
     const bool wrapper = localName(n.name()).find("Core") == std::string::npos;
-    auto core = wrapper ? firstElementChild(n) : n;
+    auto core = wrapper ? firstCoreChild(n) : n;
     Curve3 c = core ? parseCurve3Core(core,ctx) : Curve3{};
     if (wrapper && c.valid()) {
         const Transform3 tr = referencedTransform(n,ctx);
@@ -977,10 +989,81 @@ struct Surface {
     std::string type;
     double u0=0.0,u1=1.0,v0=0.0,v1=1.0;
     bool curved=true;
+    bool periodicU=false, periodicV=false;
+    double periodU=0.0, periodV=0.0;
     std::function<Vec3(Vec2)> fn;
+    std::function<bool(Vec3,Vec2&)> inverse;
     bool valid() const {return static_cast<bool>(fn);}
     Vec3 eval(Vec2 uv) const {return fn?fn(uv):Vec3{};}
 };
+
+inline double clampParam(double x, double a, double b) {
+    if (a > b) std::swap(a,b);
+    return std::clamp(x,a,b);
+}
+
+Vec2 clampSurfaceUV(const Surface& s, Vec2 q) {
+    q.x = clampParam(q.x,s.u0,s.u1);
+    q.y = clampParam(q.y,s.v0,s.v1);
+    return q;
+}
+
+bool numericalSurfaceInverse(const Surface& s, Vec3 target, Vec2& uv, const Vec2* seed = nullptr) {
+    if (!s.valid()) return false;
+    Vec2 q{};
+    if (seed) {
+        q = clampSurfaceUV(s,*seed);
+    } else {
+        // Coarse global search for the first point of an edge. Subsequent
+        // edge samples use the previous UV as a seed, so this cost is paid
+        // only once per co-edge.
+        constexpr int grid = 8;
+        double best = std::numeric_limits<double>::infinity();
+        for (int j=0;j<=grid;++j) {
+            const double fv=static_cast<double>(j)/grid;
+            const double v=s.v0+(s.v1-s.v0)*fv;
+            for (int i=0;i<=grid;++i) {
+                const double fu=static_cast<double>(i)/grid;
+                const double u=s.u0+(s.u1-s.u0)*fu;
+                const double d=length2(s.eval({u,v})-target);
+                if (d<best) { best=d; q={u,v}; }
+            }
+        }
+    }
+
+    const double ur=std::max(std::abs(s.u1-s.u0),1.0);
+    const double vr=std::max(std::abs(s.v1-s.v0),1.0);
+    for (int iter=0;iter<16;++iter) {
+        q=clampSurfaceUV(s,q);
+        const Vec3 p=s.eval(q);
+        const Vec3 r=target-p;
+        const double hu=std::max(ur*1e-6,1e-8);
+        const double hv=std::max(vr*1e-6,1e-8);
+        const double ua=clampParam(q.x-hu,s.u0,s.u1), ub=clampParam(q.x+hu,s.u0,s.u1);
+        const double va=clampParam(q.y-hv,s.v0,s.v1), vb=clampParam(q.y+hv,s.v0,s.v1);
+        Vec3 du{},dv{};
+        if (std::abs(ub-ua)>kTiny) du=(s.eval({ub,q.y})-s.eval({ua,q.y}))/(ub-ua);
+        if (std::abs(vb-va)>kTiny) dv=(s.eval({q.x,vb})-s.eval({q.x,va}))/(vb-va);
+        const double a=dot(du,du), b=dot(du,dv), c=dot(dv,dv);
+        const double rhsU=dot(du,r), rhsV=dot(dv,r);
+        const double det=a*c-b*b;
+        if (std::abs(det)<1e-24) break;
+        const double dU=(rhsU*c-rhsV*b)/det;
+        const double dV=(rhsV*a-rhsU*b)/det;
+        q.x+=dU; q.y+=dV;
+        if (dU*dU+dV*dV<1e-22) break;
+    }
+    q=clampSurfaceUV(s,q);
+    const double scale=std::max({length(s.eval({s.u0,s.v0})-s.eval({s.u1,s.v1})),1.0});
+    const bool ok=distance(s.eval(q),target)<=std::max(scale*5e-5,1e-6);
+    uv=q;
+    return ok;
+}
+
+bool surfaceInverse(const Surface& s, Vec3 p, Vec2& uv, const Vec2* seed = nullptr) {
+    if (s.inverse && s.inverse(p,uv)) return true;
+    return numericalSurfaceInverse(s,p,uv,seed);
+}
 
 std::pair<double,double> angleRangeRadians(pugi::xml_node n, const Context& ctx, double a=0.0, double b=1.0) {
     if (!n) return {a,b};
@@ -1009,7 +1092,13 @@ Surface parseSurfaceCore(pugi::xml_node core, Context& ctx) {
         const Vec3 o=parseVec3(nodeText(core,"Origin").c_str()),du=parseVec3(nodeText(core,"DirU").c_str()),dv=parseVec3(nodeText(core,"DirV").c_str());
         auto ur=parseNumbers(core.attribute("domainU").value()), vr=parseNumbers(core.attribute("domainV").value());
         if(ur.size()>=2){s.u0=ur[0];s.u1=ur[1];} if(vr.size()>=2){s.v0=vr[0];s.v1=vr[1];}
-        s.curved=false;s.fn=[o,du,dv](Vec2 q){return o+du*q.x+dv*q.y;};return s;
+        s.curved=false;s.fn=[o,du,dv](Vec2 q){return o+du*q.x+dv*q.y;};
+        s.inverse=[o,du,dv](Vec3 p,Vec2& q){
+            const Vec3 d=p-o;const double a=dot(du,du),b=dot(du,dv),c=dot(dv,dv),det=a*c-b*b;
+            if(std::abs(det)<1e-24)return false;
+            const double r0=dot(d,du),r1=dot(d,dv);
+            q={(r0*c-r1*b)/det,(r1*a-r0*b)/det};return true;
+        };return s;
     }
 
     if(s.type=="Cylinder23Core" || s.type=="Cone23Core") {
@@ -1019,12 +1108,15 @@ Surface parseSurfaceCore(pugi::xml_node core, Context& ctx) {
         const double su=core.attribute("scaleU").as_double(1.0),sv=core.attribute("scaleV").as_double(1.0);const bool turned=attrBool(core,"turnedV",false);
         auto ar=angleRangeRadians(childLocal(sweep,"DomainAngle"),ctx,0.0,2*kPi);s.u0=ar.first/std::max(su,kTiny);s.u1=ar.second/std::max(su,kTiny);
         const double L=nodeDouble(core,"Length");s.v0=0;s.v1=L/std::max(sv,kTiny);
+        s.periodicU=true;s.periodU=(2*kPi)/std::max(std::abs(su),kTiny);
         if(s.type=="Cylinder23Core") {
             const double r=nodeDouble(core,"Diameter")*0.5;
             s.fn=[ap,az,dx,dy,su,sv,turned,L,r](Vec2 q){double u=q.x*su;double z=q.y*sv;if(turned)z=L-z;return ap+az*z+(dx*std::cos(u)+dy*std::sin(u))*r;};
+            s.inverse=[ap,az,dx,dy,su,sv,turned,L](Vec3 p,Vec2& q){Vec3 d=p-ap;double z=dot(d,az);Vec3 rr=d-az*z;double a=std::atan2(dot(rr,dy),dot(rr,dx));double u=a/std::max(std::abs(su),kTiny);double v=(turned?(L-z):z)/std::max(std::abs(sv),kTiny);q={u,v};return true;};
         } else {
             const double rb=nodeDouble(core,"DiameterBottom")*0.5,rt=nodeDouble(core,"DiameterTop")*0.5;
             s.fn=[ap,az,dx,dy,su,sv,turned,L,rb,rt](Vec2 q){double u=q.x*su;double z=q.y*sv;if(turned)z=L-z;double f=std::abs(L)>kTiny?z/L:0;double r=rb+(rt-rb)*f;return ap+az*z+(dx*std::cos(u)+dy*std::sin(u))*r;};
+            s.inverse=[ap,az,dx,dy,su,sv,turned,L](Vec3 p,Vec2& q){Vec3 d=p-ap;double z=dot(d,az);Vec3 rr=d-az*z;double a=std::atan2(dot(rr,dy),dot(rr,dx));double u=a/std::max(std::abs(su),kTiny);double v=(turned?(L-z):z)/std::max(std::abs(sv),kTiny);q={u,v};return true;};
         }
         return s;
     }
@@ -1034,16 +1126,18 @@ Surface parseSurfaceCore(pugi::xml_node core, Context& ctx) {
         const double r=nodeDouble(core,"Diameter")*0.5,su=core.attribute("scaleU").as_double(1.0),sv=core.attribute("scaleV").as_double(1.0);const bool turned=attrBool(core,"turnedV",false);
         const Vec3 center=parseVec3(nodeText(core,"Location").c_str()),mer=normalized(parseVec3(nodeText(sw,"DirMeridianPrime").c_str())),north=normalized(parseVec3(nodeText(sw,"DirNorthPole").c_str())),east=normalized(cross(north,mer));
         auto lat=angleRangeRadians(childLocal(sw,"DomainLatitude"),ctx,-kPi/2,kPi/2),lon=angleRangeRadians(childLocal(sw,"DomainLongitude"),ctx,0,2*kPi);
-        s.u0=lon.first/std::max(su,kTiny);s.u1=lon.second/std::max(su,kTiny);s.v0=lat.first/std::max(sv,kTiny);s.v1=lat.second/std::max(sv,kTiny);
-        s.fn=[r,su,sv,turned,center,mer,north,east](Vec2 q){double lon=q.x*su,lat=q.y*sv;if(turned)lat=-lat;Vec3 radial=mer*std::cos(lon)+east*std::sin(lon);return center+(radial*std::cos(lat)+north*std::sin(lat))*r;};return s;
+        s.u0=lon.first/std::max(su,kTiny);s.u1=lon.second/std::max(su,kTiny);s.v0=lat.first/std::max(sv,kTiny);s.v1=lat.second/std::max(sv,kTiny);s.periodicU=true;s.periodU=(2*kPi)/std::max(std::abs(su),kTiny);
+        s.fn=[r,su,sv,turned,center,mer,north,east](Vec2 q){double lon=q.x*su,lat=q.y*sv;if(turned)lat=-lat;Vec3 radial=mer*std::cos(lon)+east*std::sin(lon);return center+(radial*std::cos(lat)+north*std::sin(lat))*r;};
+        s.inverse=[su,sv,turned,center,mer,north,east](Vec3 p,Vec2& q){Vec3 d=normalized(p-center);double lat=std::asin(std::clamp(dot(d,north),-1.0,1.0));double lon=std::atan2(dot(d,east),dot(d,mer));if(turned)lat=-lat;q={lon/std::max(std::abs(su),kTiny),lat/std::max(std::abs(sv),kTiny)};return true;};return s;
     }
 
     if(s.type=="Torus23Core") {
         auto axis=childLocal(core,"Axis"),sw=childLocal(core,"LatitudeLongitudeSweep");if(!axis||!sw)return {};
         const double R=nodeDouble(core,"DiameterMajor")*0.5,r=nodeDouble(core,"DiameterMinor")*0.5,su=core.attribute("scaleU").as_double(1.0),sv=core.attribute("scaleV").as_double(1.0),off=core.attribute("offsetV").as_double(0.0);const bool turned=attrBool(core,"turnedV",false);
         const Vec3 center=parseVec3(nodeText(axis,"AxisPoint").c_str()),north=normalized(parseVec3(nodeText(axis,"Direction").c_str())),mer=normalized(parseVec3(nodeText(sw,"DirMeridianPrime").c_str())),east=normalized(cross(north,mer));
-        auto lat=angleRangeRadians(childLocal(sw,"DomainLatitude"),ctx,-kPi,kPi),lon=angleRangeRadians(childLocal(sw,"DomainLongitude"),ctx,0,2*kPi);s.u0=lon.first/std::max(su,kTiny);s.u1=lon.second/std::max(su,kTiny);s.v0=lat.first/std::max(sv,kTiny);s.v1=lat.second/std::max(sv,kTiny);
-        s.fn=[R,r,su,sv,off,turned,center,north,mer,east](Vec2 q){double lon=q.x*su,lat=off+q.y*sv;if(turned)lat=off-q.y*sv;Vec3 radial=mer*std::cos(lon)+east*std::sin(lon);return center+radial*(R+r*std::cos(lat))+north*(r*std::sin(lat));};return s;
+        auto lat=angleRangeRadians(childLocal(sw,"DomainLatitude"),ctx,-kPi,kPi),lon=angleRangeRadians(childLocal(sw,"DomainLongitude"),ctx,0,2*kPi);s.u0=lon.first/std::max(su,kTiny);s.u1=lon.second/std::max(su,kTiny);s.v0=lat.first/std::max(sv,kTiny);s.v1=lat.second/std::max(sv,kTiny);s.periodicU=true;s.periodU=(2*kPi)/std::max(std::abs(su),kTiny);s.periodicV=true;s.periodV=(2*kPi)/std::max(std::abs(sv),kTiny);
+        s.fn=[R,r,su,sv,off,turned,center,north,mer,east](Vec2 q){double lon=q.x*su,lat=off+q.y*sv;if(turned)lat=off-q.y*sv;Vec3 radial=mer*std::cos(lon)+east*std::sin(lon);return center+radial*(R+r*std::cos(lat))+north*(r*std::sin(lat));};
+        s.inverse=[R,su,sv,off,turned,center,north,mer,east](Vec3 p,Vec2& q){Vec3 d=p-center;double z=dot(d,north);Vec3 rp=d-north*z;double rho=length(rp);double lon=std::atan2(dot(rp,east),dot(rp,mer));double lat=std::atan2(z,rho-R);double v=(turned?(off-lat):(lat-off))/std::max(std::abs(sv),kTiny);q={lon/std::max(std::abs(su),kTiny),v};return true;};return s;
     }
 
     if(s.type=="Nurbs23Core") {
@@ -1102,8 +1196,12 @@ Surface parseSurfaceCore(pugi::xml_node core, Context& ctx) {
 }
 
 Surface parseSurfaceNode(pugi::xml_node n, Context& ctx) {
-    const bool wrapper=localName(n.name()).find("Core")==std::string::npos;auto core=wrapper?firstElementChild(n):n;Surface s=core?parseSurfaceCore(core,ctx):Surface{};
-    if(wrapper&&s.valid()){Transform3 tr=referencedTransform(n,ctx);auto f=s.fn;s.fn=[f,tr](Vec2 q){return tr.applyPoint(f(q));};}
+    const bool wrapper=localName(n.name()).find("Core")==std::string::npos;auto core=wrapper?firstCoreChild(n):n;Surface s=core?parseSurfaceCore(core,ctx):Surface{};
+    if(wrapper&&s.valid()){
+        Transform3 tr=referencedTransform(n,ctx);auto f=s.fn;auto inv=s.inverse;
+        s.fn=[f,tr](Vec2 q){return tr.applyPoint(f(q));};
+        if(inv)s.inverse=[inv,tr](Vec3 p,Vec2& q){return inv(tr.inverseApplyPoint(p),q);};
+    }
     return s;
 }
 
@@ -1114,7 +1212,7 @@ struct MeshData {
 };
 
 MeshData parseMesh(pugi::xml_node mesh, Context& ctx) {
-    MeshData m;auto core=childLocal(mesh,"MeshTriangleCore");if(!core)core=firstElementChild(mesh);if(!core)return m;
+    MeshData m;auto core=childLocal(mesh,"MeshTriangleCore");if(!core)core=firstCoreChild(mesh);if(!core)return m;
     const auto vr=arrayDoubles(core,"Vertices","VerticesBinary",&ctx);for(std::size_t i=0;i+2<vr.size();i+=3)m.vertices.push_back({vr[i],vr[i+1],vr[i+2]});
     const auto ti=arrayInts(core,"Triangles","TrianglesBinary",&ctx);for(std::size_t i=0;i+2<ti.size();i+=3){if(ti[i]<0||ti[i+1]<0||ti[i+2]<0)continue;std::uint32_t a=static_cast<std::uint32_t>(ti[i]),b=static_cast<std::uint32_t>(ti[i+1]),c=static_cast<std::uint32_t>(ti[i+2]);if(a<m.vertices.size()&&b<m.vertices.size()&&c<m.vertices.size())m.triangles.push_back({a,b,c});}
     return m;
@@ -1142,21 +1240,75 @@ void cleanRing(std::vector<Vec2>& ring) {
 
 struct RingData { std::vector<Vec2> uv; std::string form; };
 
-bool parseLoopRing(pugi::xml_node loop,Context& ctx,RingData& out) {
+void unwrapOne(double& value, double previous, bool periodic, double period) {
+    if (!periodic || period <= kTiny) return;
+    while (value - previous > 0.5 * period) value -= period;
+    while (value - previous < -0.5 * period) value += period;
+}
+
+void appendSurfaceCurveSamples(std::vector<Vec2>& dst, std::vector<Vec2> src, const Surface& surface) {
+    if (src.empty()) return;
+    // Preserve QIF co-edge orientation.  Only move periodic coordinates by
+    // whole periods so neighboring samples form a continuous UV path across
+    // cylinder/sphere/torus seams.
+    if (!dst.empty()) {
+        unwrapOne(src.front().x, dst.back().x, surface.periodicU, surface.periodU);
+        unwrapOne(src.front().y, dst.back().y, surface.periodicV, surface.periodV);
+    }
+    for (std::size_t i=1;i<src.size();++i) {
+        unwrapOne(src[i].x, src[i-1].x, surface.periodicU, surface.periodU);
+        unwrapOne(src[i].y, src[i-1].y, surface.periodicV, surface.periodV);
+    }
+    if (!dst.empty() && !src.empty()) {
+        const double scale=std::max({1.0,std::abs(dst.back().x),std::abs(dst.back().y),std::abs(src.front().x),std::abs(src.front().y)});
+        if (dist2(dst.back(),src.front()) <= sqr(scale*1e-9)) src.erase(src.begin());
+    }
+    dst.insert(dst.end(),src.begin(),src.end());
+}
+
+bool projectEdgeToSurfaceUV(pugi::xml_node coedge,const Surface& surface,Context& ctx,std::vector<Vec2>& uv) {
+    auto eo=childLocal(coedge,"EdgeOriented");
+    auto edgeIdNode=childLocal(eo,"Id");
+    if(!edgeIdNode)return false;
+    auto eit=ctx.ids.find(edgeIdNode.child_value());
+    if(eit==ctx.ids.end()||localName(eit->second.name())!="Edge")return false;
+    const std::string curveId=refId(eit->second,"Curve");
+    auto cit=ctx.ids.find(curveId);
+    if(curveId.empty()||cit==ctx.ids.end())return false;
+    Curve3 c=parseCurve3Node(cit->second,ctx);
+    if(!c.valid())return false;
+    auto samples=sampleCurve3(c,std::max(6,ctx.options->curveSamplesPerSpan));
+    if(attrBool(eo,"turned",false))std::reverse(samples.begin(),samples.end());
+    if(samples.empty())return false;
+    std::vector<Vec2> projected;projected.reserve(samples.size());
+    Vec2 previous{};bool havePrevious=false;
+    for(const auto&p:samples){
+        Vec2 q{};const Vec2* seed=havePrevious?&previous:nullptr;
+        if(!surfaceInverse(surface,p,q,seed))return false;
+        if(havePrevious){unwrapOne(q.x,previous.x,surface.periodicU,surface.periodU);unwrapOne(q.y,previous.y,surface.periodicV,surface.periodV);}
+        projected.push_back(q);previous=q;havePrevious=true;
+    }
+    uv=std::move(projected);return uv.size()>=2;
+}
+
+bool parseLoopRing(pugi::xml_node loop,const Surface& surface,Context& ctx,RingData& out) {
     out.form=loop.attribute("form").value();auto coedges=childLocal(loop,"CoEdges");if(!coedges)return false;
-    // Curve12 is already the oriented trimming curve in surface parameter space.
-    // EdgeOriented/@turned reverses the referenced 3D edge; it does not reverse
-    // Curve12.  Keep the p-curves in their QIF order and only repair tiny
-    // numerical endpoint mismatches when concatenating them.
     for (auto ce : coedges.children()) {
         if (ce.type() != pugi::node_element || localName(ce.name()) != "CoEdge") continue;
+        std::vector<Vec2> samples;
         const std::string cid = refId(ce, "Curve12");
-        if (cid.empty()) continue;
-        auto it = ctx.ids.find(cid);
-        if (it == ctx.ids.end()) continue;
-        Curve2 c = parseCurve2Node(it->second, ctx);
-        if (!c.valid()) continue;
-        appendCurveSamples(out.uv, sampleCurve2(c, ctx.options->curveSamplesPerSpan));
+        if (!cid.empty()) {
+            auto it = ctx.ids.find(cid);
+            if (it != ctx.ids.end()) {
+                Curve2 c = parseCurve2Node(it->second, ctx);
+                if (c.valid()) samples=sampleCurve2(c, ctx.options->curveSamplesPerSpan);
+            }
+        }
+        // Curve12 is optional in QIF.  STEP-derived files often preserve only
+        // the topological Edge/Curve13. Reconstruct the missing p-curve by
+        // projecting that oriented 3D edge onto the Face surface.
+        if(samples.empty())projectEdgeToSurfaceUV(ce,surface,ctx,samples);
+        appendSurfaceCurveSamples(out.uv,std::move(samples),surface);
     }
     cleanRing(out.uv);return out.uv.size()>=3;
 }
@@ -1209,12 +1361,35 @@ void emitRefined(const Surface& surface,const Transform3& world,Vec2 ua,Vec2 ub,
 
 using EarPoint=std::array<double,2>;using EarRing=std::vector<EarPoint>;using EarPolygon=std::vector<EarRing>;
 
+bool periodicRectangleBounds(const RingData& ring,const Surface& surface,Vec2& lo,Vec2& hi) {
+    if(ring.uv.size()<4 || (!surface.periodicU && !surface.periodicV)) return false;
+    lo={std::numeric_limits<double>::infinity(),std::numeric_limits<double>::infinity()};
+    hi={-std::numeric_limits<double>::infinity(),-std::numeric_limits<double>::infinity()};
+    for(auto p:ring.uv){lo.x=std::min(lo.x,p.x);lo.y=std::min(lo.y,p.y);hi.x=std::max(hi.x,p.x);hi.y=std::max(hi.y,p.y);}
+    const double du=hi.x-lo.x,dv=hi.y-lo.y;
+    const bool coversU=surface.periodicU && surface.periodU>kTiny && du>=surface.periodU*0.95;
+    const bool coversV=surface.periodicV && surface.periodV>kTiny && dv>=surface.periodV*0.95;
+    if(!coversU && !coversV)return false;
+    const double tol=std::max({std::abs(du),std::abs(dv),1.0})*2e-5;
+    for(auto p:ring.uv){
+        const bool onSide=std::abs(p.x-lo.x)<=tol||std::abs(p.x-hi.x)<=tol||std::abs(p.y-lo.y)<=tol||std::abs(p.y-hi.y)<=tol;
+        if(!onSide)return false;
+    }
+    return du>tol&&dv>tol;
+}
+
+void emitParamRectangle(const Surface& surface,const Transform3& world,Vec2 lo,Vec2 hi,Color color,double tolerance,int maxDepth,bool turned,std::vector<Triangle>& triangles,Bounds3& bounds){
+    const Vec2 a{lo.x,lo.y},b{hi.x,lo.y},c{hi.x,hi.y},d{lo.x,hi.y};
+    emitRefined(surface,world,a,b,c,color,tolerance,0,maxDepth,turned,triangles,bounds);
+    emitRefined(surface,world,a,c,d,color,tolerance,0,maxDepth,turned,triangles,bounds);
+}
+
 bool renderParamFace(pugi::xml_node face,const Transform3& world,Style inherited,Context& ctx) {
     const PrimitiveCursor emittedFrom = primitiveCursor(*ctx.out);
     Style style=applyStyle(inherited,face);if(style.hidden&&!ctx.options->includeHidden){++ctx.out->diagnostics.hiddenEntityCount;return true;}
     const std::string sid=refId(face,"Surface");auto sit=ctx.ids.find(sid);if(sid.empty()||sit==ctx.ids.end())return false;Surface surface=parseSurfaceNode(sit->second,ctx);if(!surface.valid()){++ctx.out->diagnostics.unsupportedGeometryTypes[localName(sit->second.name())];return false;}
     const bool hasOuter=attrBool(face,"hasOuter",true);std::vector<RingData> rings;const auto lids=refIds(face,"LoopIds");
-    for(const auto&id:lids){auto it=ctx.ids.find(id);if(it==ctx.ids.end()||localName(it->second.name())!="Loop")continue;RingData r;if(parseLoopRing(it->second,ctx,r))rings.push_back(std::move(r));}
+    for(const auto&id:lids){auto it=ctx.ids.find(id);if(it==ctx.ids.end()||localName(it->second.name())!="Loop")continue;RingData r;if(parseLoopRing(it->second,surface,ctx,r))rings.push_back(std::move(r));}
     if(!hasOuter){RingData natural;natural.form="OUTER";natural.uv={{surface.u0,surface.v0},{surface.u1,surface.v0},{surface.u1,surface.v1},{surface.u0,surface.v1}};rings.insert(rings.begin(),std::move(natural));}
     if(rings.empty())return false;
     // Slit/vertex loops are non-area trimming entities. Keep their wireframe but do not feed them to earcut as holes.
@@ -1222,9 +1397,18 @@ bool renderParamFace(pugi::xml_node face,const Transform3& world,Style inherited
     if(areaRings.empty())return false;
     // QIF says the first LoopId is the outer loop when hasOuter=true. Some exports also label it OUTER; move one explicitly-labelled outer loop first when present.
     auto oi=std::find_if(areaRings.begin(),areaRings.end(),[](const RingData&r){return r.form=="OUTER";});if(oi!=areaRings.end()&&oi!=areaRings.begin())std::iter_swap(areaRings.begin(),oi);
+    const bool turned=attrBool(face,"turned",false);
+    if(areaRings.size()==1){
+        Vec2 lo{},hi{};
+        if(periodicRectangleBounds(areaRings.front(),surface,lo,hi)){
+            emitParamRectangle(surface,world,lo,hi,style.color,ctx.out->tessellationTolerance,std::max(0,ctx.options->maxRefinementDepth),turned,ctx.out->triangles,ctx.out->bounds);
+            tagSource(*ctx.out,emittedFrom,face.attribute("id").value());
+            return ctx.out->triangles.size()>emittedFrom.triangles;
+        }
+    }
     EarPolygon poly;std::vector<Vec2> flat;for(const auto&r:areaRings){EarRing er;for(auto p:r.uv){er.push_back({p.x,p.y});flat.push_back(p);}poly.push_back(std::move(er));}
     std::vector<std::uint32_t> indices;try{indices=mapbox::earcut<std::uint32_t>(poly);}catch(...){return false;}if(indices.size()<3)return false;
-    const bool turned=attrBool(face,"turned",false);for(std::size_t i=0;i+2<indices.size();i+=3){if(indices[i]>=flat.size()||indices[i+1]>=flat.size()||indices[i+2]>=flat.size())continue;emitRefined(surface,world,flat[indices[i]],flat[indices[i+1]],flat[indices[i+2]],style.color,ctx.out->tessellationTolerance,0,std::max(0,ctx.options->maxRefinementDepth),turned,ctx.out->triangles,ctx.out->bounds);}
+    for(std::size_t i=0;i+2<indices.size();i+=3){if(indices[i]>=flat.size()||indices[i+1]>=flat.size()||indices[i+2]>=flat.size())continue;emitRefined(surface,world,flat[indices[i]],flat[indices[i+1]],flat[indices[i+2]],style.color,ctx.out->tessellationTolerance,0,std::max(0,ctx.options->maxRefinementDepth),turned,ctx.out->triangles,ctx.out->bounds);}
     tagSource(*ctx.out,emittedFrom,face.attribute("id").value());return true;
 }
 
@@ -1330,14 +1514,21 @@ bool renderBody(pugi::xml_node body,const Transform3& parentWorld,Style inherite
     Style style=applyStyle(inherited,body);if(style.hidden&&!ctx.options->includeHidden){++ctx.out->diagnostics.hiddenEntityCount;return true;}
     Transform3 world=compose(parentWorld,referencedTransform(body,ctx));std::vector<std::pair<std::string,bool>> faces;shellFaceIds(body,ctx,faces);bool any=false;
     for(const auto& f:faces){++ctx.out->faceCount;if(renderFaceByIdTurned(f.first,world,style,f.second,ctx))any=true;else ++ctx.out->skippedFaces;}
-    // QIF also permits lower-dimensional bodies. Render explicit edges/vertices if the body has no faces.
-    if(faces.empty()){
-        for(const auto&l:refIds(body,"LoopIds"))any=renderLoopById(l,world,style,ctx)||any;
+
+    // QIF explicitly permits lower-dimensional bodies (loops, edges and
+    // vertices).  STEP-derived wire/edge models frequently use these forms.
+    // Render the explicit lower-dimensional topology regardless of whether a
+    // face list is also present: it is useful as a recovery path when a face
+    // has malformed or producer-specific trimming data.
+    const std::size_t edgesBefore = ctx.out->edges.size();
+    for(const auto&l:refIds(body,"LoopIds"))any=renderLoopById(l,world,style,ctx)||any;
+    if(ctx.out->edges.size()==edgesBefore){
         for(const auto&e:refIds(body,"EdgeIds"))any=renderEdgeById(e,world,style,ctx)||any;
-        for(const auto&v:refIds(body,"VertexIds"))any=renderVertexById(v,world,style,ctx)||any;
     }
+    for(const auto&v:refIds(body,"VertexIds"))any=renderVertexById(v,world,style,ctx)||any;
+
     tagBody(*ctx.out,emittedFrom,body.attribute("id").value());
-    return any||faces.empty();
+    return any;
 }
 
 bool renderPartAssemblyCommon(pugi::xml_node n,const Transform3& world,Style style,Context&ctx) {
@@ -1472,6 +1663,102 @@ bool renderProduct(pugi::xml_node product,Context&ctx) {
     return any;
 }
 
+bool renderStandaloneCurve(pugi::xml_node curve, Context& ctx) {
+    const PrimitiveCursor emittedFrom = primitiveCursor(*ctx.out);
+    Style style = applyStyle({}, curve);
+    if (style.hidden && !ctx.options->includeHidden) { ++ctx.out->diagnostics.hiddenEntityCount; return true; }
+    Curve3 c = parseCurve3Node(curve, ctx);
+    if (!c.valid()) {
+        ++ctx.out->diagnostics.unsupportedGeometryTypes[localName(curve.name())];
+        return false;
+    }
+    auto pts = sampleCurve3(c, ctx.options->curveSamplesPerSpan);
+    if (pts.size() < 2) return false;
+    addPolyline(*ctx.out, std::move(pts), style.color);
+    tagSource(*ctx.out, emittedFrom, curve.attribute("id").value());
+    return true;
+}
+
+bool renderStandaloneMesh(pugi::xml_node mesh, Context& ctx) {
+    const PrimitiveCursor emittedFrom = primitiveCursor(*ctx.out);
+    Style style = applyStyle({}, mesh);
+    if (style.hidden && !ctx.options->includeHidden) { ++ctx.out->diagnostics.hiddenEntityCount; return true; }
+    MeshData m = parseMesh(mesh, ctx);
+    if (!m.valid()) return false;
+    for (const auto& t : m.triangles) {
+        const Vec3 a = m.vertices[t[0]], b = m.vertices[t[1]], c = m.vertices[t[2]];
+        ctx.out->triangles.push_back({a,b,c,style.color});
+        ctx.out->bounds.add(a);ctx.out->bounds.add(b);ctx.out->bounds.add(c);
+    }
+    tagSource(*ctx.out, emittedFrom, mesh.attribute("id").value());
+    return true;
+}
+
+bool renderStandalonePoint(pugi::xml_node point, Context& ctx) {
+    auto xyz = childLocal(point, "XYZ");
+    if (!xyz) return false;
+    Style style = applyStyle({}, point);
+    if (style.hidden && !ctx.options->includeHidden) { ++ctx.out->diagnostics.hiddenEntityCount; return true; }
+    const Vec3 p = parseVec3(xyz.child_value());
+    ctx.out->points.push_back({p, style.color, 2.0});
+    ctx.out->bounds.add(p);
+    if (auto id = point.attribute("id")) ctx.out->points.back().sourceId = id.value();
+    return true;
+}
+
+bool renderFallbackGeometry(Context& ctx) {
+    Style style;
+    bool any = false;
+
+    // First prefer explicit topology. This is the important path for STEP
+    // wireframe/edge-derived QIF files whose Product root or Body references
+    // are incomplete or omitted by the exporter.
+    if (ctx.out->faceCount == 0) {
+        for (const auto& kv : ctx.ids) {
+            const std::string n = localName(kv.second.name());
+            if (n == "Face" || n == "FaceMesh") {
+                ++ctx.out->faceCount;
+                if (renderFaceById(kv.first, Transform3::identity(), style, ctx)) any = true;
+                else ++ctx.out->skippedFaces;
+            }
+        }
+    }
+    const std::size_t edgeCountAfterFaces = ctx.out->edges.size();
+    for (const auto& kv : ctx.ids) {
+        if (localName(kv.second.name()) == "Edge") any = renderEdgeById(kv.first, Transform3::identity(), style, ctx) || any;
+    }
+    for (const auto& kv : ctx.ids) {
+        if (localName(kv.second.name()) == "Vertex") any = renderVertexById(kv.first, Transform3::identity(), style, ctx) || any;
+    }
+    for (const auto& kv : ctx.ids) {
+        if (localName(kv.second.name()) == "PointCloud" && ctx.options->includePointClouds)
+            any = renderPointCloud(kv.second, Transform3::identity(), style, ctx) || any;
+    }
+
+    // If there is no usable topology, display legal standalone GeometrySet
+    // entities. STEP converters often emit Curve13 geometry even when they do
+    // not build Body/Edge topology.
+    static const std::unordered_set<std::string> curve13Names = {
+        "Segment13","Polyline13","ArcCircular13","ArcConic13","Nurbs13","Spline13","Aggregate13"
+    };
+    if (ctx.out->edges.size() == edgeCountAfterFaces) {
+        for (const auto& kv : ctx.ids) {
+            if (curve13Names.count(localName(kv.second.name()))) any = renderStandaloneCurve(kv.second, ctx) || any;
+        }
+    }
+    if (ctx.out->triangles.empty()) {
+        for (const auto& kv : ctx.ids) {
+            if (localName(kv.second.name()) == "MeshTriangle") any = renderStandaloneMesh(kv.second, ctx) || any;
+        }
+    }
+    if (ctx.out->points.empty() && ctx.out->edges.empty() && ctx.out->triangles.empty()) {
+        for (const auto& kv : ctx.ids) {
+            if (localName(kv.second.name()) == "Point") any = renderStandalonePoint(kv.second, ctx) || any;
+        }
+    }
+    return any;
+}
+
 } // namespace
 
 bool QifLoader::load(const std::string& path,QifMesh& out,std::string& error,const LoadOptions& options) {
@@ -1487,13 +1774,33 @@ bool QifLoader::load(const std::string& path,QifMesh& out,std::string& error,con
     if(!out.qifVersion.empty() && out.qifVersion.rfind("3.",0)!=0)ctx.warn("This build targets QIF 3.x; the document reports versionQIF="+out.qifVersion+".");
     const double diag=std::max(rawBounds.diagonal(),1.0);out.tessellationTolerance=options.tessellationTolerance>0.0?options.tessellationTolerance:diag*2.5e-4;
     auto product=findFirstLocal(root,"Product");bool rendered=product&&renderProduct(product,ctx);
-    if(!rendered){
-        // Geometry-only QIF fragments and unusual documents can omit Product roots. Fall back to all topological faces/point clouds.
-        Style s;for(const auto&kv:ctx.ids){const std::string n=localName(kv.second.name());if(n=="Face"||n=="FaceMesh"){++out.faceCount;if(!renderFaceById(kv.first,Transform3::identity(),s,ctx))++out.skippedFaces;}else if(n=="PointCloud"&&options.includePointClouds)renderPointCloud(kv.second,Transform3::identity(),s,ctx);}
+    if(!rendered || (out.triangles.empty() && out.edges.empty() && out.points.empty())){
+        // Geometry-only and STEP-derived edge/wire QIF files may omit the
+        // Product root, Part/Body links, or even topology completely. Fall
+        // back through Face -> Edge -> Vertex -> standalone Curve13/Mesh/Point
+        // so legal display geometry is not rejected just because assembly
+        // structure is incomplete.
+        rendered = renderFallbackGeometry(ctx) || rendered;
+    } else if (out.triangles.empty() && out.skippedFaces > 0) {
+        // If every face failed to triangulate, keep the model useful by
+        // drawing its underlying 3D edges instead of presenting an empty view.
+        Style s;
+        for (const auto& kv : ctx.ids) if (localName(kv.second.name()) == "Edge") renderEdgeById(kv.first, Transform3::identity(), s, ctx);
     }
     if(!out.bounds.valid&&rawBounds.valid)out.bounds=rawBounds;
     if(options.strictUnsupported&&!out.diagnostics.unsupportedGeometryTypes.empty()){std::ostringstream ss;ss<<"Unsupported QIF geometry types:";for(const auto&kv:out.diagnostics.unsupportedGeometryTypes)ss<<" "<<kv.first<<"("<<kv.second<<")";error=ss.str();return false;}
-    if(options.requireDisplayGeometry && out.triangles.empty()&&out.edges.empty()&&out.points.empty()){error="The QIF file was parsed, but no displayable Product geometry/topology was found.";return false;}
+    if(options.requireDisplayGeometry && out.triangles.empty()&&out.edges.empty()&&out.points.empty()){
+        std::ostringstream ss;
+        ss << "The QIF file was parsed, but no displayable geometry/topology was emitted. Indexed geometry:";
+        for (const auto& kv : out.diagnostics.geometryTypes) ss << " " << kv.first << "=" << kv.second;
+        ss << "; topology:";
+        for (const auto& kv : out.diagnostics.topologyTypes) ss << " " << kv.first << "=" << kv.second;
+        if (!out.diagnostics.unsupportedGeometryTypes.empty()) {
+            ss << "; unsupported/invalid geometry:";
+            for (const auto& kv : out.diagnostics.unsupportedGeometryTypes) ss << " " << kv.first << "=" << kv.second;
+        }
+        error=ss.str();return false;
+    }
     return true;
 }
 

@@ -61,3 +61,7 @@ No network access is performed for validation.
 ## Presentation boundary
 
 Cameras/saved views and product body/component visibility are implemented. Rich Visualization/PMI is retained and validated but not yet fully rendered; see `FULL_SPEC_ROADMAP.md` for the exact remaining semantic presentation work.
+
+## STEP-derived wire/edge fallback
+
+The loader renders lower-dimensional `Body` topology and also recovers display geometry from standalone `Edge`/`Vertex` topology or standalone Curve13/MeshTriangle/Point geometry when a STEP-derived exporter omits complete Product/Part/Body links. Geometry wrappers with an optional leading `Attributes` element are handled without confusing `Attributes` for the mathematical `*Core`.

@@ -59,3 +59,11 @@ ctest --test-dir build --output-on-failure
 ```
 
 The runtime test is the final proof that Mesa/loader/ICD/X11 WSI and SDL agree on that machine.
+
+## Edge/wire regression fixtures
+
+`tests/conformance/edge-only.qif` is a schema-valid edge topology file without Body/Part links, and `tests/conformance/wire-body.qif` is a schema-valid `Body form="WIRE"` model. Both use a Curve13 wrapper with `Attributes` before `Segment13Core` to exercise the core-lookup bug fixed in 0.5.1. CTest loads both with the real `qifcore` loader and requires emitted wire polylines and expected bounds.
+
+## STEP-derived sheet regression
+
+`tests/conformance/sheet-circle-no-pcurve.qif` is a schema-valid open SHEET body/open Shell with a planar circular face whose four CoEdges intentionally omit optional `Curve12` p-curves. `qif_sheet_surface_load_test` verifies that the viewer reconstructs the trimming loop from the referenced 3D ArcCircular13 edges and emits a filled face rather than only wire geometry.

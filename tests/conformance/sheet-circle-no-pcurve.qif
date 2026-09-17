@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<QIFDocument xmlns="http://qifstandards.org/xsd/qif3" versionQIF="3.0.0" idMax="22">
+  <QPId>00000000-0000-4000-8000-000000000012</QPId>
+  <Product>
+    <GeometrySet>
+      <PointSet n="4">
+        <Point id="1"><XYZ>5 0 0</XYZ></Point>
+        <Point id="2"><XYZ>0 5 0</XYZ></Point>
+        <Point id="3"><XYZ>-5 0 0</XYZ></Point>
+        <Point id="4"><XYZ>0 -5 0</XYZ></Point>
+      </PointSet>
+      <Curve13Set n="4">
+        <ArcCircular13 id="5"><ArcCircular13Core domain="0 1.5707963267948966"><Radius>5</Radius><Center>0 0 0</Center><DirBeg>1 0 0</DirBeg><Normal>0 0 1</Normal></ArcCircular13Core></ArcCircular13>
+        <ArcCircular13 id="6"><ArcCircular13Core domain="0 1.5707963267948966"><Radius>5</Radius><Center>0 0 0</Center><DirBeg>0 1 0</DirBeg><Normal>0 0 1</Normal></ArcCircular13Core></ArcCircular13>
+        <ArcCircular13 id="7"><ArcCircular13Core domain="0 1.5707963267948966"><Radius>5</Radius><Center>0 0 0</Center><DirBeg>-1 0 0</DirBeg><Normal>0 0 1</Normal></ArcCircular13Core></ArcCircular13>
+        <ArcCircular13 id="8"><ArcCircular13Core domain="0 1.5707963267948966"><Radius>5</Radius><Center>0 0 0</Center><DirBeg>0 -1 0</DirBeg><Normal>0 0 1</Normal></ArcCircular13Core></ArcCircular13>
+      </Curve13Set>
+      <SurfaceSet n="1">
+        <Plane23 id="13"><Plane23Core domainU="-6 6" domainV="-6 6"><Origin>0 0 0</Origin><DirU>1 0 0</DirU><DirV>0 1 0</DirV></Plane23Core></Plane23>
+      </SurfaceSet>
+    </GeometrySet>
+    <TopologySet>
+      <VertexSet n="4">
+        <Vertex id="9"><Point><Id>1</Id></Point></Vertex>
+        <Vertex id="10"><Point><Id>2</Id></Point></Vertex>
+        <Vertex id="11"><Point><Id>3</Id></Point></Vertex>
+        <Vertex id="12"><Point><Id>4</Id></Point></Vertex>
+      </VertexSet>
+      <EdgeSet n="4">
+        <Edge id="14"><Curve><Id>5</Id></Curve><VertexBeg><Id>9</Id></VertexBeg><VertexEnd><Id>10</Id></VertexEnd></Edge>
+        <Edge id="15"><Curve><Id>6</Id></Curve><VertexBeg><Id>10</Id></VertexBeg><VertexEnd><Id>11</Id></VertexEnd></Edge>
+        <Edge id="16"><Curve><Id>7</Id></Curve><VertexBeg><Id>11</Id></VertexBeg><VertexEnd><Id>12</Id></VertexEnd></Edge>
+        <Edge id="17"><Curve><Id>8</Id></Curve><VertexBeg><Id>12</Id></VertexBeg><VertexEnd><Id>9</Id></VertexEnd></Edge>
+      </EdgeSet>
+      <LoopSet n="1">
+        <Loop id="18" form="OUTER"><CoEdges n="4">
+          <CoEdge><EdgeOriented turned="false"><Id>14</Id></EdgeOriented></CoEdge>
+          <CoEdge><EdgeOriented turned="false"><Id>15</Id></EdgeOriented></CoEdge>
+          <CoEdge><EdgeOriented turned="false"><Id>16</Id></EdgeOriented></CoEdge>
+          <CoEdge><EdgeOriented turned="false"><Id>17</Id></EdgeOriented></CoEdge>
+        </CoEdges></Loop>
+      </LoopSet>
+      <FaceSet n="1"><Face id="19"><Surface><Id>13</Id></Surface><LoopIds n="1"><Id>18</Id></LoopIds></Face></FaceSet>
+      <ShellSet n="1"><Shell id="20" closed="false"><FaceIds n="1"><Id>19</Id></FaceIds></Shell></ShellSet>
+      <BodySet n="1"><Body id="21" form="SHEET"><ShellIds n="1"><Id>20</Id></ShellIds></Body></BodySet>
+    </TopologySet>
+    <PartSet n="1"><Part id="22"><BodyIds n="1"><Id>21</Id></BodyIds></Part></PartSet>
+    <RootPart><Id>22</Id></RootPart>
+  </Product>
+</QIFDocument>

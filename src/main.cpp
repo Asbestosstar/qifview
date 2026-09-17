@@ -338,7 +338,7 @@ void renderStrokeText(SDL_Renderer* renderer,
     double xCursor = 0.0;
     double yCursor = 0.0;
     for (char ch : text.text) {
-        if (ch == '\\n') { xCursor = 0.0; yCursor -= lineAdvance; continue; }
+        if (ch == '\n') { xCursor = 0.0; yCursor -= lineAdvance; continue; }
         const auto glyph = strokeGlyph(ch);
         for (const auto& seg : glyph) {
             const Vec3 a = text.origin + text.right * ((xCursor + seg.x1 * 0.75) * heightScale) + text.up * ((yCursor + seg.y1) * heightScale);

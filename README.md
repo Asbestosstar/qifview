@@ -1,6 +1,14 @@
-# QIF Viewer 0.5.0
+# QIF Viewer 0.5.2
 
 Cross-platform C++17 **QIF 3.0 reader, conformance checker, and 3D product-geometry viewer**. The implementation is based on the ANSI/DMSC QIF 3.0-2018 specification and the complete QIF 3.0.0 XSD/XSLT package bundled under `spec/qif3/xsd`.
+
+## STEP-derived sheet/open-shell recovery
+
+Version 0.5.2 adds a recovery path for QIF files derived from STEP/OpenCASCADE-style B-rep data where a `CoEdge` omits its optional `Curve12` p-curve. The viewer now samples the oriented 3D `Edge`/`Curve13`, projects those points back to the face surface parameter space, unwraps periodic cylinder/sphere/torus seams, and uses the reconstructed loop for face tessellation. This restores open sheet bodies and circular sheet boundaries that could previously appear only as wire edges or disappear entirely.
+
+The inverse mapper has analytic paths for planes, cylinders/cones, spheres and tori plus a numerical surface inverse fallback for other legal QIF surfaces. Full-period periodic wall loops that reduce to a rectangular parameter-space boundary are tessellated directly instead of relying on a seam-crossing polygon triangulation. A schema-valid regression fixture covers an open `Body form="SHEET"` / open `Shell` whose circular boundary has no `Curve12`.
+
+QIF conic/segment math remains tied to the normative QIF formulas and the supplied NIST files. In particular, ellipse `ArcConic13` values are not globally halved: the NIST files' `A`/`B` values match their referenced edge vertices when used directly. `Segment13` also continues to use `StartPoint + t(EndPoint-StartPoint)` over the declared domain; non-`0 1` domains in the NIST files match their edge vertices with that interpretation.
 
 Version 0.5 separates three different notions of completeness that should not be confused:
 
@@ -15,6 +23,13 @@ Version 0.5 separates three different notions of completeness that should not be
 Implemented geometry includes all QIF 3.0 2D and 3D curve families (`Segment`, `Polyline`, circular/conic arcs, `Nurbs`, `Spline`, `Aggregate`), all parametric surface families (`Plane`, `Cylinder`, `Cone`, `Sphere`, `Torus`, `Nurbs`, `Spline`, `Extrude`, `Ruled`, `Revolution`, `Offset`), and the discrete geometry types (`Point`, `MeshTriangle`, `PathTriangulation`).
 
 Topology support covers `Vertex`, `Edge`, `Loop`, `LoopMesh`, `Face`, `FaceMesh`, `Shell`, `Body`, and `PointCloud`, including face/shell orientation, `hasOuter=false`, inner/slit/vertex loops, mesh-face subsets, lower-dimensional bodies, tolerant topology as display geometry, point-cloud visibility/color data, and binary arrays.
+
+
+### STEP-derived wire / edge geometry
+
+QIF 0.5.1 explicitly supports STEP-derived wireframe and edge-only models. A file no longer needs faces, a complete Body/Part root, or a fully connected Product scene merely to be displayable. The loader now falls back through standalone topology (`Face`/`FaceMesh`, `Edge`, `Vertex`, `PointCloud`) and, when topology is absent, legal standalone `Curve13`, `MeshTriangle`, and `Point` geometry. This also fixes geometry wrappers that contain the optional QIF `Attributes` element before their `*Core` element; the parser now locates the actual core by name rather than assuming the first child is geometry.
+
+Two schema-valid regression fixtures cover both an orphan edge topology model and a normal `Body form="WIRE"` model.
 
 ## Product structure, transforms, and units
 

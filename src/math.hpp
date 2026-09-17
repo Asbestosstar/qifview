@@ -71,6 +71,11 @@ struct Transform3 {
     Vec3 applyVector(Vec3 v) const { return x * v.x + y * v.y + z * v.z; }
     Vec3 applyPoint(Vec3 p) const { return origin + applyVector(p); }
 
+    // QIF transforms are rigid rotation + translation matrices.  The inverse
+    // rotation is therefore the transpose of the three orthonormal columns.
+    Vec3 inverseApplyVector(Vec3 v) const { return {dot(v, x), dot(v, y), dot(v, z)}; }
+    Vec3 inverseApplyPoint(Vec3 p) const { return inverseApplyVector(p - origin); }
+
     static Transform3 identity() { return {}; }
 };
 
