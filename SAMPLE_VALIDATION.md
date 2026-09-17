@@ -1,26 +1,61 @@
-# Validation against the supplied NIST QIF samples
+# Validation and regression status
 
-The loader design was checked against all six QIF files supplied with the request. Together they contain **1,025 B-rep faces**.
+QIF Viewer 0.4.0 uses several independent checks because no single test proves complete QIF behavior.
 
-| Sample | Faces | Plane23 | Cylinder23 | Cone23 | Sphere23 | Torus23 | Nurbs23 |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| nist_ftc_09_asme1_ap242.qif | 161 | 62 | 91 | 0 | 0 | 0 | 8 |
-| nist_ftc_08_asme1_ap242-1.qif | 248 | 82 | 134 | 0 | 20 | 12 | 0 |
-| nist_ftc_06_asme1_ap242.qif | 187 | 71 | 88 | 8 | 8 | 12 | 0 |
-| nist_ctc_05_asme1_ap242.qif | 156 | 62 | 67 | 13 | 4 | 6 | 4 |
-| nist_ctc_03_asme1_ap242.qif | 156 | 86 | 70 | 0 | 0 | 0 | 0 |
-| nist_ctc_01_asme1_ap242.qif | 117 | 56 | 57 | 4 | 0 | 0 | 0 |
-| **Total** | **1,025** | **419** | **507** | **25** | **32** | **30** | **12** |
+## Package/inventory audit
 
-Observed Curve12 types in these samples are `Segment12`, `Nurbs12`, and `Aggregate12`; all are implemented by the loader.
+```text
+tools/full_spec_audit.py
+  Reachable XSD files: 23/23
+  Global declarations: elements=1058 complexTypes=2046 simpleTypes=168
+  Reachable official XSLT files: 6
+  PASS
 
-## Geometry checks performed
+tools/schema_coverage.py
+  Geometry: 28/28
+  Topology: 9/9
+  Geometry evaluator core branches: 25/25
+  PASS
+```
 
-- Surface parameter equations were compared with the supplied QIF topology by evaluating the Curve12 trimming endpoints and checking that they map onto their corresponding 3D edge endpoints.
-- The check covered planes, cylinders, cones, spheres, tori, and NURBS surfaces present in the files.
-- All 1,025 face trimming polygons become valid UV polygons after snapping the very small numerical endpoint/closure gaps that occur in the exported p-curves.
-- Several sphere/cylinder loops contain closure mismatches on the order of floating-point/CAD export tolerance; without snapping those endpoints, a triangulator can interpret the microscopic closure segment as a self-intersection at a periodic seam or sphere pole. `qif_model.cpp` explicitly handles this case.
+## Full-conformance fixtures
 
-## Build validation performed in the development sandbox
+`tests/conformance/minimal.qif` is a valid QIF document with no product geometry. It verifies that QIF conformance is not incorrectly tied to the presence of a 3D model.
 
-The C++ sources were passed through C++17 compiler syntax checks with strict warnings enabled. The sandbox did not contain SDL3/pugixml/earcut development packages and did not allow dependency fetching, so a linked graphical executable was not produced there. The included CMake build fetches pinned dependency versions on a normal development machine, or can use preinstalled packages for offline builds.
+`tests/conformance/external-source.qif` references `external-target.qif` using a local external-QIF reference. `qifvalidate --full` validates the target, verifies its QPId and `xId`, and resolves it without network access.
+
+Both fixtures pass the full validation stack.
+
+## Six NIST product samples
+
+The six NIST samples used throughout development remain XSD-valid and retain their existing geometry rendering coverage. Five pass the official DMSC checks with no reported errors. `nist_ftc_08_asme1_ap242-1.qif` is XSD-valid but the official QIF quality stylesheet reports four `G-SH-FR` free-edge findings (edge ids 2884, 2888, 2892 and 2894).
+
+Those four findings are deliberately **not** treated as parser failures. They demonstrate the distinction between:
+
+```text
+schema validity
+!= official QIF quality findings
+!= viewer implementation errors
+```
+
+## SDL Solaris Vulkan regression test
+
+`tests/sdl_solaris_vulkan_patch_test.py` constructs the known SDL 3.x Vulkan platform-gate variants, applies `cmake/PatchSDLSolarisVulkan.cmake`, and then runs `tools/verify_sdl_solaris_vulkan.py`. It also tests an already-Solaris-enabled allow-list to ensure the patch is idempotent.
+
+This test validates build-system logic only. It cannot prove a specific Solaris machine has a working Vulkan loader/ICD/WSI stack.
+
+## C++ build validation in this package-generation environment
+
+The source has been syntax-checked as C++17 with warnings enabled using local header stubs for pugixml, SDL3 and earcut. CMake is also configured against synthetic dependency targets to catch project-level CMake errors.
+
+The package-generation environment cannot perform a real SDL/Vulkan/Solaris/SPARC linked build because it does not contain that target graphics stack and cannot fetch/build all third-party dependencies. A real Solaris validation should therefore still run:
+
+```sh
+python3 tools/verify_sdl_solaris_vulkan.py /path/to/SDL
+cmake -S . -B build ...
+cmake --build build -j
+ctest --test-dir build --output-on-failure
+./build/qifviewer --renderer vulkan sample.qif
+```
+
+The runtime test is the final proof that Mesa/loader/ICD/X11 WSI and SDL agree on that machine.
