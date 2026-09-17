@@ -24,7 +24,7 @@ The QIF parser and tessellator are platform-neutral C++17. The window/input/rend
 - **Windows:** use `--renderer vulkan` when a Vulkan runtime/driver is installed; `auto` can choose another native SDL renderer when Vulkan is unavailable.
 - **Linux:** use `--renderer vulkan` with a Vulkan driver; OpenGL/software are fallbacks.
 - **FreeBSD / NetBSD / OpenBSD:** the source is intended to build with SDL3. Vulkan availability depends on the particular OS, GPU, and driver; otherwise use OpenGL/software.
-- **Solaris:** the source is intended to build with SDL3 and keeps the QIF code free of OS-specific APIs. Vulkan is not assumed to exist on a Solaris installation; use an SDL renderer actually supplied by that SDL build, normally OpenGL or software when Vulkan is unavailable.
+- **Solaris:** the source is intended to build with SDL3 and keeps the QIF code free of OS-specific APIs. Vulkan is not assumed to exist on a Solaris installation; use an SDL renderer actually supplied by that SDL build, normally OpenGL or software when Vulkan is unavailable. You can enable Vulkan on Solaris/Illumos by compiling Mesa with it enabled as it is proven to work with LavaPipe.
 
 In other words, Metal and Vulkan are supported render paths, but the application does **not** claim that every target OS has a Vulkan driver.
 
@@ -122,9 +122,8 @@ The display layer uses SDL's triangle renderer and performs the 3D transform and
 
 ## License
 
-The QIF Viewer source in this repository is MIT licensed. Dependencies retain their own licenses and are fetched separately.
+The QIF Viewer source in this repository is The Unlicense licensed. Dependencies retain their own licenses and are fetched separately.
 
 ## Additional notes
 
 - `SAMPLE_VALIDATION.md` documents the geometry/topology coverage of the six supplied NIST samples.
-- `BUILDING_SOLARIS.md` contains a Solaris/SPARC-oriented build path, including a parser-only build for bringing up dependencies incrementally.
