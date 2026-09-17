@@ -160,32 +160,54 @@ install(FILES
 )
 
 include(CTest)
-if(BUILD_TESTING)
-    add_executable(qif_camera_math_test tests/camera_math_test.cpp)
-    target_include_directories(qif_camera_math_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-    add_test(NAME qif_camera_math COMMAND qif_camera_math_test)
+# Tests are optional packaging/development content.  Release/source packages may
+# omit the entire tests/ directory; that must not prevent a normal configure or
+# build, even when CTest's BUILD_TESTING option is left at its default ON value.
+if(BUILD_TESTING AND IS_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/camera_math_test.cpp")
+        add_executable(qif_camera_math_test tests/camera_math_test.cpp)
+        target_include_directories(qif_camera_math_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+        add_test(NAME qif_camera_math COMMAND qif_camera_math_test)
+    endif()
 
     find_package(Python3 COMPONENTS Interpreter QUIET)
     if(Python3_Interpreter_FOUND)
-        add_test(NAME qif_schema_inventory
-                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/schema_inventory_test.py)
-        add_test(NAME qif_full_spec_audit
-                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/full_spec_audit.py
-                         --schema-root ${CMAKE_CURRENT_SOURCE_DIR}/spec/qif3/xsd)
-        add_test(NAME qif_sdl_solaris_vulkan_patch
-                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/sdl_solaris_vulkan_patch_test.py)
-        execute_process(
-            COMMAND ${Python3_EXECUTABLE} -c "import lxml"
-            RESULT_VARIABLE QIFVIEWER_HAVE_PYTHON_LXML
-            OUTPUT_QUIET ERROR_QUIET
-        )
-        if(QIFVIEWER_HAVE_PYTHON_LXML EQUAL 0)
-            add_test(NAME qif_minimal_full_conformance
-                     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/validate_qif.py
-                             --full ${CMAKE_CURRENT_SOURCE_DIR}/tests/conformance/minimal.qif)
-            add_test(NAME qif_external_reference_conformance
-                     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/validate_qif.py
-                             --full ${CMAKE_CURRENT_SOURCE_DIR}/tests/conformance/external-source.qif)
+        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/schema_inventory_test.py")
+            add_test(NAME qif_schema_inventory
+                     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/schema_inventory_test.py)
+        endif()
+
+        # These audits live under tools/ rather than tests/, so they can still
+        # be registered when the corresponding tool exists.
+        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/full_spec_audit.py")
+            add_test(NAME qif_full_spec_audit
+                     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/full_spec_audit.py
+                             --schema-root ${CMAKE_CURRENT_SOURCE_DIR}/spec/qif3/xsd)
+        endif()
+
+        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/sdl_solaris_vulkan_patch_test.py")
+            add_test(NAME qif_sdl_solaris_vulkan_patch
+                     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/sdl_solaris_vulkan_patch_test.py)
+        endif()
+
+        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/conformance/minimal.qif" AND
+           EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/conformance/external-source.qif" AND
+           EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/validate_qif.py")
+            execute_process(
+                COMMAND ${Python3_EXECUTABLE} -c "import lxml"
+                RESULT_VARIABLE QIFVIEWER_HAVE_PYTHON_LXML
+                OUTPUT_QUIET ERROR_QUIET
+            )
+            if(QIFVIEWER_HAVE_PYTHON_LXML EQUAL 0)
+                add_test(NAME qif_minimal_full_conformance
+                         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/validate_qif.py
+                                 --full ${CMAKE_CURRENT_SOURCE_DIR}/tests/conformance/minimal.qif)
+                add_test(NAME qif_external_reference_conformance
+                         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/validate_qif.py
+                                 --full ${CMAKE_CURRENT_SOURCE_DIR}/tests/conformance/external-source.qif)
+            endif()
         endif()
     endif()
+elseif(BUILD_TESTING)
+    message(STATUS "QIF Viewer: tests/ directory not present; configuring without project tests")
 endif()

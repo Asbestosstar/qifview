@@ -150,6 +150,8 @@ Viewer controls: left drag orbit, right drag pan, wheel zoom, **F** filled, **W*
 
 ## Testing
 
+The `tests/` directory is optional. CMake will configure and build normally if it is omitted from a release/source package, even when `BUILD_TESTING` is left enabled. When the directory is present, available test files are registered individually.
+
 ```sh
 ctest --test-dir build --output-on-failure
 python3 tools/full_spec_audit.py
@@ -157,7 +159,7 @@ python3 tools/schema_coverage.py
 python3 tests/sdl_solaris_vulkan_patch_test.py
 ```
 
-The test suite includes schema-package reachability, full-conformance fixtures, local external-QIF resolution, camera/quaternion math, geometry/topology inventory checks, and regression tests for the Solaris SDL Vulkan CMake patch.
+The full test suite includes schema-package reachability, full-conformance fixtures, local external-QIF resolution, camera/quaternion math, geometry/topology inventory checks, and regression tests for the Solaris SDL Vulkan CMake patch.
 
 ## License
 
